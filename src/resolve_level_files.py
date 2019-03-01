@@ -8,6 +8,7 @@ from flask import Response
 from google.cloud import storage
 
 from .utils import handle_request
+from . import exceptions
 
 bucket = storage.Client().bucket('assets.staging.cytoid.io')
 
@@ -15,7 +16,7 @@ bucket = storage.Client().bucket('assets.staging.cytoid.io')
 def run (request):
 	payload = handle_request(request)
 	if 'url' not in payload:
-		raise ValueError('url not found')
+		raise exceptions.BadRequest('url of the target file not specified')
 	filepath = payload['url']
 	parseLevelFile(filepath)
 	return ''
@@ -28,7 +29,7 @@ def assetPaths(metadata):
 def parseLevelFile(filepath):
 	fileblob = bucket.get_blob(filepath)
 	if not fileblob:
-		print('file not found')
+		raise exceptions.NotFound('file not found')
 		return
 
 	# Temp File to download level file into
@@ -51,11 +52,11 @@ def parseLevelFile(filepath):
 				print(level_dir_path)
 
 	except FileNotFoundError as error:
-		print(error)
+		raise exceptions.NotFound("file specified in metadata not found")
 	except zipfile.BadZipFile as error:
-		print(error)
+		raise exceptions.BadRequest("Zip Package Invalid")
 	except zipfile.LargeZipFile as error:
-		print(error)
+		raise exceptions.HTTPException("Zip Package too big", status=501)
 	return ''
 
 def upload_file(source_path, destination_path, filename):
