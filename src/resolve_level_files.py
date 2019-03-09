@@ -4,29 +4,29 @@ import json
 import zipfile
 import string
 import random
-from flask import Response
+from flask import Response, jsonify
 from google.cloud import storage
 
 from .utils import handle_request
 from . import exceptions
 
-bucket = storage.Client().bucket('assets.staging.cytoid.io')
+bucket = storage.Client().bucket('assets.cytoid.io')
 
 
 def run (request):
 	payload = handle_request(request)
-	if 'url' not in payload:
-		raise exceptions.BadRequest('url of the target file not specified')
-	filepath = payload['url']
-	parseLevelFile(filepath)
-	return ''
+	filepath = payload.get('packagePath')
+	bundlepath = payload.get('bundlePath')
+	if not filepath or not bundlepath:
+		raise exceptions.BadRequest('packagePath or bundlePath not specified')
+	return jsonify(parseLevelFile(filepath, bundlepath))
 
 def assetPaths(metadata):
 	yield metadata['music_preview']['path']
 	yield metadata['music']['path']
 	yield metadata['background']['path']
 
-def parseLevelFile(filepath):
+def parseLevelFile(filepath, bundlepath):
 	fileblob = bucket.get_blob(filepath)
 	if not fileblob:
 		raise exceptions.NotFound('file not found')
@@ -43,13 +43,15 @@ def parseLevelFile(filepath):
 				metadata = json.load(meta_file)
 				print(metadata)
 				filedata['metadata'] = metadata
-				
-				level_dir_path = os.path.join('levels', randomStr(30))
-				for path in assetPaths(filedata['metadata']):
-					zipFile.extract(path, path=temp_dir)
-					upload_file(temp_dir, level_dir_path, path)
-					os.remove(os.path.join(temp_dir, path))
-				print(level_dir_path)
+
+				for asset_filename in assetPaths(filedata['metadata']):
+					zipFile.extract(asset_filename, path=temp_dir)
+					bucket.blob(
+						os.path.join(bundlepath, asset_filename)
+					).upload_from_filename(
+						os.path.join(temp_dir, asset_filename)
+					)
+					os.remove(os.path.join(temp_dir, asset_filename))
 
 	except FileNotFoundError as error:
 		raise exceptions.NotFound("file specified in metadata not found")
@@ -57,25 +59,7 @@ def parseLevelFile(filepath):
 		raise exceptions.BadRequest("Zip Package Invalid")
 	except zipfile.LargeZipFile as error:
 		raise exceptions.HTTPException("Zip Package too big", status=501)
-	return ''
-
-def upload_file(source_path, destination_path, filename):
-	bucket.blob(
-		os.path.join(destination_path, filename)
-	).upload_from_filename(
-		os.path.join(source_path, filename)
-	)
-
-def checkFileExistance(directory, data):
-	if not data:
-		return False
-	path = data.get('path')
-	if not path:
-		return False
-	path = os.path.join(directory, path)
-	if not os.path.isfile(path):
-		return False
-	return True
+	return filedata
 
 def randomStr(size, chars=None):
 	if not chars:
